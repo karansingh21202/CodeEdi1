@@ -1,0 +1,73 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+h1, h2 {
+  color: #333;
+}
+
+// Sidebar.css
+.sidebar {
+  width: 20%;
+  height: 100vh;
+  background-color: #f4f4f4;
+  padding: 20px;
+  position: fixed;
+}
+
+.sidebar ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+.sidebar ul li {
+  margin: 10px 0;
+}
+
+// RepositoryScreen.css
+.repository-container {
+  display: flex;
+}
+
+.repository-content {
+  margin-left: 20%;
+  padding: 20px;
+  width: 80%;
+}
+
+.add-repo-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  cursor: pointer;
+}
+
+.repository-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.repository-table th, .repository-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+// LoginScreen.css
+.login-container {
+  text-align: center;
+  margin-top: 100px;
+}
+
+.login-buttons button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  margin: 10px;
+  cursor: pointer;
+}
