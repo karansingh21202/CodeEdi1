@@ -313,7 +313,27 @@ const CodeEditor = () => {
     setTestCaseInput('');
   };
   
-  // Convert text to speech using Google TTS only.
+  // Add this new function for text chunking
+  const splitTextIntoChunks = (text, maxChunkLength = 200) => {
+    // Split by sentences first
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+    const chunks = [];
+    let currentChunk = '';
+
+    sentences.forEach(sentence => {
+      if ((currentChunk + sentence).length <= maxChunkLength) {
+        currentChunk += sentence;
+      } else {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        currentChunk = sentence;
+      }
+    });
+
+    if (currentChunk) chunks.push(currentChunk.trim());
+    return chunks;
+  };
+
+  // Update handleConvertToSpeech to handle chunks
   const handleConvertToSpeech = async (textToSpeak, shouldStream = false) => {
     const ttsKey = import.meta.env.VITE_GOOGLE_TTS_API_KEY;
     if (!ttsKey) {
@@ -322,7 +342,7 @@ const CodeEditor = () => {
     }
 
     textToSpeak = String(textToSpeak);
-    // Clean up the text.
+    // Clean up the text
     textToSpeak = textToSpeak
       .replace(/[*`]+/g, '')
       .replace(/_/g, ' ')
@@ -345,7 +365,7 @@ const CodeEditor = () => {
       return;
     }
 
-    // Stop any currently playing audio.
+    // Stop any currently playing audio
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -353,84 +373,110 @@ const CodeEditor = () => {
     setTtsLoading(true);
 
     const MAX_RETRIES = 3;
-    const TIMEOUT = 30000; // 30 seconds timeout
-    let retryCount = 0;
+    const TIMEOUT = 30000;
+    const CHUNK_DELAY = 500; // Delay between chunks in milliseconds
 
-    const makeTTSRequest = async () => {
-      try {
-        const requestBody = {
-          audioConfig: {
-            audioEncoding: "MP3",
-            effectsProfileId: ["large-home-entertainment-class-device"],
-            pitch: 0,
-            speakingRate: 0.9,
-          },
-          input: { text: textToSpeak },
-          voice: { 
-            languageCode: "en-US", 
-            name: "en-US-Neural2-F",
-            ssmlGender: "FEMALE"
-          },
-        };
+    // Split text into manageable chunks
+    const textChunks = splitTextIntoChunks(textToSpeak);
+    console.log(`Split text into ${textChunks.length} chunks`);
 
-        const response = await axios.post(
-          `https://texttospeech.googleapis.com/v1/text:synthesize?key=${ttsKey}`,
-          requestBody,
-          { 
-            headers: { "Content-Type": "application/json" },
-            timeout: TIMEOUT
-          }
-        );
+    const makeTTSRequest = async (chunk) => {
+      let retryCount = 0;
 
-        if (response.data.audioContent) {
-          const audioContent = response.data.audioContent;
-          const audioBlob = new Blob(
-            [Uint8Array.from(atob(audioContent), (c) => c.charCodeAt(0))],
-            { type: "audio/mp3" }
+      const attemptRequest = async () => {
+        try {
+          const requestBody = {
+            audioConfig: {
+              audioEncoding: "MP3",
+              effectsProfileId: ["large-home-entertainment-class-device"],
+              pitch: 0,
+              speakingRate: 0.9,
+            },
+            input: { text: chunk },
+            voice: { 
+              languageCode: "en-US", 
+              name: "en-US-Neural2-F",
+              ssmlGender: "FEMALE"
+            },
+          };
+
+          const response = await axios.post(
+            `https://texttospeech.googleapis.com/v1/text:synthesize?key=${ttsKey}`,
+            requestBody,
+            { 
+              headers: { "Content-Type": "application/json" },
+              timeout: TIMEOUT
+            }
           );
-          const url = URL.createObjectURL(audioBlob);
-          
-          if (shouldStream) {
-            const audio = new Audio(url);
-            audioRef.current = audio;
-            await audio.play().catch(error => {
-              console.error('Error playing audio:', error);
-              throw error;
-            });
+
+          if (response.data.audioContent) {
+            const audioContent = response.data.audioContent;
+            const audioBlob = new Blob(
+              [Uint8Array.from(atob(audioContent), (c) => c.charCodeAt(0))],
+              { type: "audio/mp3" }
+            );
+            const url = URL.createObjectURL(audioBlob);
+            
+            if (shouldStream) {
+              const audio = new Audio(url);
+              audioRef.current = audio;
+              await new Promise((resolve, reject) => {
+                audio.onended = resolve;
+                audio.onerror = reject;
+                audio.play().catch(reject);
+              });
+              URL.revokeObjectURL(url);
+            } else {
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "synthesized-audio.mp3";
+              a.style.display = "none";
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+            return true;
           } else {
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "synthesized-audio.mp3";
-            a.style.display = "none";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            throw new Error("No audio content returned from the API");
           }
-          return true;
-        } else {
-          throw new Error("No audio content returned from the API");
+        } catch (error) {
+          console.error(`TTS attempt ${retryCount + 1} failed for chunk:`, error);
+          if (retryCount < MAX_RETRIES - 1) {
+            retryCount++;
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+            return attemptRequest();
+          }
+          throw error;
         }
-      } catch (error) {
-        console.error(`TTS attempt ${retryCount + 1} failed:`, error);
-        if (retryCount < MAX_RETRIES - 1) {
-          retryCount++;
-          // Exponential backoff: wait longer between each retry
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
-          return makeTTSRequest();
-        }
-        throw error;
-      }
+      };
+
+      return attemptRequest();
     };
 
     try {
-      await makeTTSRequest();
+      // Process chunks sequentially
+      for (let i = 0; i < textChunks.length; i++) {
+        const chunk = textChunks[i];
+        console.log(`Processing chunk ${i + 1}/${textChunks.length}`);
+        
+        try {
+          await makeTTSRequest(chunk);
+          // Add a small delay between chunks
+          if (i < textChunks.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, CHUNK_DELAY));
+          }
+        } catch (error) {
+          console.error(`Failed to process chunk ${i + 1}:`, error);
+          // Continue with next chunk even if current one fails
+          continue;
+        }
+      }
     } catch (error) {
-      console.error("All TTS attempts failed:", error);
-      // Show user-friendly error message
+      console.error("TTS processing failed:", error);
       const errorMessage = { 
         role: 'model', 
-        text: "Sorry, I'm having trouble generating speech right now. Please try again in a moment." 
+        text: "Sorry, I'm having trouble generating speech for some parts of the response. Please try again." 
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
